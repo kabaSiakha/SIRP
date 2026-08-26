@@ -16,6 +16,7 @@ from app.schemas.incident import (
     IncidentResponse,
     IncidentListResponse,
 )
+from app.services.notification import NotificationService
 
 router = APIRouter(prefix="/incidents", tags=["Incidents"])
 
@@ -287,6 +288,32 @@ def update_incident_status(
     db.commit()
     db.refresh(incident)
 
+    # Notification email au créateur et à l'assigné
+    creator = db.query(User).filter(User.id == incident.created_by).first()
+    if creator and creator.id != current_user.id:
+        NotificationService.notify_status_change(
+            incident_id=incident.id,
+            incident_title=incident.title,
+            old_status=old_status.value,
+            new_status=new_status.value,
+            changed_by=current_user.full_name,
+            recipient_email=creator.email,
+            recipient_name=creator.full_name
+        )
+
+    if incident.assigned_to and incident.assigned_to != current_user.id:
+        assignee = db.query(User).filter(User.id == incident.assigned_to).first()
+        if assignee:
+            NotificationService.notify_status_change(
+                incident_id=incident.id,
+                incident_title=incident.title,
+                old_status=old_status.value,
+                new_status=new_status.value,
+                changed_by=current_user.full_name,
+                recipient_email=assignee.email,
+                recipient_name=assignee.full_name
+            )
+
     return incident
 
 
@@ -336,6 +363,7 @@ def assign_incident(
             detail="Incident non trouvé"
         )
 
+    assignee = None
     if assignee_id:
         assignee = db.query(User).filter(User.id == assignee_id).first()
         if not assignee:
@@ -358,6 +386,16 @@ def assign_incident(
 
     db.commit()
     db.refresh(incident)
+
+    # Notification email à l'utilisateur assigné
+    if assignee and assignee.id != current_user.id:
+        NotificationService.notify_incident_assigned(
+            incident_id=incident.id,
+            incident_title=incident.title,
+            assigned_by=current_user.full_name,
+            recipient_email=assignee.email,
+            recipient_name=assignee.full_name
+        )
 
     return incident
 
