@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from app.core.deps import get_db, get_current_user, require_analyst, require_admin
+from app.core.workflow import validate_transition, get_allowed_transitions, get_workflow_diagram
 from app.models.user import User, UserRole
 from app.models.incident import Incident, IncidentStatus, IncidentSeverity, IncidentCategory
 from app.models.audit_log import AuditLog
@@ -241,9 +242,19 @@ def update_incident_status(
     incident_id: int,
     new_status: IncidentStatus,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_analyst)
+    current_user: User = Depends(get_current_user)
 ):
-    """Changer le statut d'un incident (Admin/Analyst uniquement)"""
+    """
+    Changer le statut d'un incident selon le workflow.
+
+    Transitions valides:
+    - OPEN → IN_PROGRESS (Prise en charge)
+    - IN_PROGRESS → RESOLVED (Résolution)
+    - IN_PROGRESS → OPEN (Remise en attente)
+    - RESOLVED → CLOSED (Fermeture)
+    - RESOLVED → IN_PROGRESS (Réouverture)
+    - CLOSED → IN_PROGRESS (Réouverture exceptionnelle - admin only)
+    """
     incident = db.query(Incident).filter(Incident.id == incident_id).first()
 
     if not incident:
@@ -253,6 +264,10 @@ def update_incident_status(
         )
 
     old_status = incident.status
+
+    # Valider la transition selon le workflow
+    transition_config = validate_transition(old_status, new_status, current_user.role)
+
     incident.status = new_status
     incident.updated_at = datetime.utcnow()
 
@@ -264,15 +279,45 @@ def update_incident_status(
     create_audit_log(
         db=db,
         user_id=current_user.id,
-        action="status_change",
+        action=transition_config["action"],
         incident_id=incident.id,
-        details=f"Statut: {old_status.value} → {new_status.value}"
+        details=f"{transition_config['label']}: {old_status.value} → {new_status.value}"
     )
 
     db.commit()
     db.refresh(incident)
 
     return incident
+
+
+@router.get("/{incident_id}/transitions")
+def get_incident_transitions(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Récupérer les transitions possibles pour un incident"""
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+
+    if not incident:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Incident non trouvé"
+        )
+
+    transitions = get_allowed_transitions(incident.status, current_user.role)
+
+    return {
+        "incident_id": incident.id,
+        "current_status": incident.status.value,
+        "allowed_transitions": transitions
+    }
+
+
+@router.get("/workflow/diagram")
+def get_workflow():
+    """Récupérer le diagramme du workflow des incidents"""
+    return get_workflow_diagram()
 
 
 @router.patch("/{incident_id}/assign", response_model=IncidentResponse)
