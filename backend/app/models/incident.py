@@ -38,9 +38,9 @@ class Incident(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(300), nullable=False)
     description = Column(Text, nullable=False)
-    severity = Column(Enum(IncidentSeverity), nullable=False)
-    status = Column(Enum(IncidentStatus), default=IncidentStatus.OPEN, nullable=False)
-    category = Column(Enum(IncidentCategory), nullable=False)
+    severity = Column(Enum(IncidentSeverity, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    status = Column(Enum(IncidentStatus, values_callable=lambda x: [e.value for e in x]), default=IncidentStatus.OPEN, nullable=False)
+    category = Column(Enum(IncidentCategory, values_callable=lambda x: [e.value for e in x]), nullable=False)
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
